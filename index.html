@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>News Graphic Generator</title>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:dark;
+  --bg:#0b0b12;--card:#141420;--line:rgba(255,255,255,.09);--ink:#f1f1f7;--mut:#8b8ba3;--red:#d30f1b;--blue:#3a2bd0;
+  --font:"Cairo",system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;
+}
+*{box-sizing:border-box;margin:0}
+body{background:radial-gradient(ellipse at 20% -10%,#1c1a3d,var(--bg) 55%);color:var(--ink);font-family:var(--font);padding:22px 16px 44px;min-height:100%}
+.app{display:grid;grid-template-columns:minmax(0,440px) minmax(0,1fr);gap:26px;max-width:1040px;margin:0 auto;animation:in .7s cubic-bezier(.2,.9,.2,1) both}
+@keyframes in{from{opacity:0;transform:translateY(18px)}}
+@media(max-width:820px){.app{grid-template-columns:1fr}.stage{position:static!important}}
+.stage{position:sticky;top:18px;align-self:start}
+.frame{position:relative;border-radius:16px;overflow:hidden;box-shadow:0 30px 70px -25px #000,0 0 0 1px var(--line);background:#000}
+canvas{display:block;width:100%;height:auto;cursor:default}
+canvas.has{cursor:grab;touch-action:none}canvas.has:active{cursor:grabbing}
+#hint{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;gap:10px;color:#cfd0ee;font-weight:700;cursor:pointer;text-align:center;padding:20px;transition:opacity .3s,background .3s}
+#hint:hover{background:rgba(120,110,255,.1)}
+#hint svg{width:46px;height:46px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;animation:bob 2.4s ease-in-out infinite}
+@keyframes bob{50%{transform:translateY(-6px)}}
+#hint small{font-weight:400;color:var(--mut)}
+.note{color:var(--mut);font-size:13px;margin-top:10px;text-align:center}
+.panel{display:grid;gap:14px;align-content:start}
+h1{font-size:24px;font-weight:900;line-height:1.2}h1 span{color:var(--red)}
+.sub{color:var(--mut);font-size:14px;margin:-4px 0 4px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px;display:grid;gap:12px}
+.card h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);font-weight:700}
+label{display:grid;gap:5px;font-size:13px;color:var(--mut)}
+input[type=text]{font:700 18px var(--font);color:var(--ink);background:#0d0d17;border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;outline:none;transition:border-color .2s,box-shadow .2s}
+input[type=text]:focus{border-color:var(--blue);box-shadow:0 0 0 4px rgba(58,43,208,.25)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+input[type=range]{width:100%;accent-color:var(--red)}
+.btns{display:flex;gap:8px;flex-wrap:wrap}
+button,.btn{font:700 14px var(--font);color:var(--ink);background:#1d1d2e;border:1px solid var(--line);border-radius:12px;padding:9px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:transform .4s cubic-bezier(.3,1.8,.5,1),background .2s,border-color .2s}
+button:hover,.btn:hover{background:#26263b;border-color:rgba(255,255,255,.22)}
+button:active,.btn:active{transform:scale(.93);transition-duration:.07s}
+svg.i{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.primary{background:var(--red);border-color:transparent;font-size:16px;padding:12px 18px;justify-content:center;flex:1}
+.primary:hover{background:#ec1625}
+select{font:700 14px var(--font);color:var(--ink);background:#0d0d17;border:1.5px solid var(--line);border-radius:12px;padding:10px;outline:none}
+input[type=file]{display:none}
+#msg{font-size:13px;color:var(--mut);min-height:1.4em}
+#modal{position:fixed;inset:0;z-index:9;background:rgba(0,0,0,.8);display:none;place-items:center;padding:20px}
+#modal.on{display:grid}
+#modal div{max-width:420px;text-align:center;display:grid;gap:12px}
+#modal img{width:100%;border-radius:12px}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="stage">
+    <div class="frame">
+      <canvas id="cv" width="1080" height="1350"></canvas>
+      <div id="hint" role="button" tabindex="0">
+        <svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg>
+        Tap to upload a photo<small>or drop an image here</small>
+      </div>
+    </div>
+    <p class="note" id="tip">Drag the preview to reposition · scroll to zoom</p>
+  </div>
+
+  <div class="panel">
+    <h1>News <span>Graphic</span> Generator</h1>
+    <p class="sub">Upload a photo, edit the text, download a ready-to-post PNG (4:5).</p>
+
+    <section class="card">
+      <h2>Text</h2>
+      <label>Title (red banner)<input type="text" id="title" dir="auto" value="نونو مينديز"></label>
+      <label>Subtitle (red text)<input type="text" id="sub" dir="auto" value="مهدد بالغياب"></label>
+      <div class="two">
+        <label>Title size<input type="range" id="ts" min="40" max="100" value="68"></label>
+        <label>Subtitle size<input type="range" id="ss" min="40" max="120" value="82"></label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Photo</h2>
+      <div class="btns">
+        <label class="btn" for="fileImg"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>Upload photo</label>
+        <button type="button" id="reset"><svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 11-2.6-5.9M20 4v5h-5"/></svg>Reset position</button>
+      </div>
+      <input type="file" id="fileImg" accept="image/*">
+      <label>Zoom<input type="range" id="zoom" min="1" max="3" step="0.01" value="1"></label>
+    </section>
+
+    <section class="card">
+      <h2>Brand / logo (top left)</h2>
+      <div class="two">
+        <label>Brand name<input type="text" id="brand" dir="auto" value="الحساني"></label>
+        <label>Small label<input type="text" id="brandEn" value="AL HASSANI"></label>
+      </div>
+      <div class="btns">
+        <label class="btn" for="fileLogo"><svg class="i" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg>Replace logo</label>
+        <button type="button" id="logoOff">Use default</button>
+      </div>
+      <input type="file" id="fileLogo" accept="image/*">
+    </section>
+
+    <section class="card">
+      <h2>Export</h2>
+      <div class="btns">
+        <select id="res"><option value="2">High-res · 2160 × 2700</option><option value="1">Standard · 1080 × 1350</option></select>
+        <button type="button" class="primary" id="dl"><svg class="i" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>Download PNG</button>
+      </div>
+      <div id="msg"></div>
+    </section>
+  </div>
+</div>
+
+<div id="modal"><div><img id="out" alt="Final graphic"><p>Press and hold the image (or right-click) to save it.</p><button type="button" id="close">Close</button></div></div>
+
+<script>
+const W=1080,H=1350,$=id=>document.getElementById(id),cv=$('cv'),ctx=cv.getContext('2d');
+const S={img:null,logo:null,zoom:1,ox:0,oy:0};
+const F=(s,w)=>`${w} ${s}px Cairo,"Noto Sans Arabic","Segoe UI",Tahoma,sans-serif`;
+const RED='#d30f1b',isAr=s=>/[\u0600-\u06FF]/.test(s);
+
+/* ---------- drawing helpers ---------- */
+const poly=(c,p,f)=>{c.beginPath();p.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.closePath();c.fillStyle=f;c.fill()};
+const lg=(c,x0,y0,x1,y1,a,b)=>{const g=c.createLinearGradient(x0,y0,x1,y1);g.addColorStop(0,a);g.addColorStop(1,b);return g};
+function text(c,s,x,y,sz,wt,col,maxW){
+  c.font=F(sz,wt);let w=c.measureText(s).width;
+  if(maxW&&w>maxW){sz*=maxW/w;c.font=F(sz,wt);w=maxW}
+  c.fillStyle=col;c.textAlign='center';c.textBaseline='middle';c.direction=isAr(s)?'rtl':'ltr';c.fillText(s,x,y);return w}
+
+/* ---------- the template (everything is drawn here, preview = export) ---------- */
+function draw(c,k){
+  c.save();c.scale(k,k);c.clearRect(0,0,W,H);
+
+  /* 1. photo (or placeholder) */
+  if(S.img){
+    const{w,h,el}=S.img,sc=Math.max(W/w,H/h)*S.zoom,dw=w*sc,dh=h*sc,mx=(dw-W)/2,my=(dh-H)/2;
+    S.ox=Math.max(-mx,Math.min(mx,S.ox));S.oy=Math.max(-my,Math.min(my,S.oy));
+    c.drawImage(el,(W-dw)/2+S.ox,(H-dh)/2+S.oy,dw,dh);
+  }else{
+    c.fillStyle=lg(c,0,0,0,H,'#15152a','#07070d');c.fillRect(0,0,W,H);
+    const r=c.createRadialGradient(560,520,30,560,520,640);r.addColorStop(0,'rgba(80,70,220,.4)');r.addColorStop(1,'rgba(0,0,0,0)');
+    c.fillStyle=r;c.fillRect(0,0,W,H);
+    c.fillStyle='rgba(255,255,255,.07)';c.beginPath();c.arc(560,470,150,0,7);c.fill();
+    c.beginPath();c.moveTo(170,1100);c.bezierCurveTo(190,800,380,720,560,720);c.bezierCurveTo(740,720,930,800,950,1100);c.closePath();c.fill();
+  }
+
+  /* 2. lighting: side vignette + top shade + bottom fade for text legibility */
+  const v=c.createRadialGradient(W/2,H*.42,H*.25,W/2,H*.42,H*.82);v.addColorStop(0,'rgba(0,0,0,0)');v.addColorStop(1,'rgba(0,0,0,.58)');
+  c.fillStyle=v;c.fillRect(0,0,W,H);
+  let g=c.createLinearGradient(0,0,0,H*.2);g.addColorStop(0,'rgba(0,0,0,.45)');g.addColorStop(1,'rgba(0,0,0,0)');c.fillStyle=g;c.fillRect(0,0,W,H*.2);
+  g=c.createLinearGradient(0,H*.6,0,H);[[0,0],[.3,.5],[.62,.86],[.85,.96],[1,.98]].forEach(([o,a])=>g.addColorStop(o,`rgba(0,0,0,${a})`));
+  c.fillStyle=g;c.fillRect(0,H*.6,W,H*.4);
+
+  /* 3. geometric accents */
+  poly(c,[[0,0],[64,0],[0,66]],lg(c,0,0,64,66,'#4a3be6','#241794'));                                   // top-left corner
+  poly(c,[[0,1226],[31,1226],[0,1272]],RED);                                                           // bottom-left stripes
+  poly(c,[[74,1227],[123,1227],[39,1350],[-10,1350]],RED);
+  poly(c,[[1080,1154],[1080,1350],[872,1350]],lg(c,872,1350,1080,1154,'#2a1c9c','#4636df'));           // bottom-right block
+  poly(c,[[1080,1275],[1080,1303],[1030,1350],[1000,1350]],'#05050a');
+
+  /* 4. brand block (top left) */
+  if(S.logo){
+    const{w,h,el}=S.logo,s=Math.min(200/w,152/h);c.drawImage(el,58+(200-w*s)/2,44+(152-h*s)/2,w*s,h*s);
+  }else{
+    c.save();c.translate(94,57);c.strokeStyle='#fff';c.lineWidth=17;c.lineJoin='round';c.lineCap='butt';
+    c.beginPath();c.moveTo(92,10);c.lineTo(40,10);c.quadraticCurveTo(12,10,12,38);c.quadraticCurveTo(12,66,40,66);c.lineTo(66,66);c.stroke();
+    poly(c,[[66,62],[96,62],[88,84],[58,84]],RED);c.restore();
+    c.save();c.translate(138,160);c.transform(1,0,-.2,1,0,0);text(c,$('brand').value,0,0,48,800,'#fff',150);c.restore();
+    poly(c,[[63,178],[86,178],[86,183],[63,183]],RED);poly(c,[[186,178],[209,178],[209,183],[186,183]],'#3a2bd0');
+    if('letterSpacing' in c)c.letterSpacing='2px';
+    text(c,$('brandEn').value.toUpperCase(),138,181,8.5,700,'rgba(255,255,255,.85)',92);
+    if('letterSpacing' in c)c.letterSpacing='0px';
+  }
+
+  /* 5. title banner + subtitle */
+  const t=$('title').value||' ',ts=+$('ts').value;
+  c.font=F(ts,900);const tw=Math.min(c.measureText(t).width,880),bw=Math.max(519,tw+190),cx=535,T=1139,B=1246;
+  poly(c,[[cx-bw/2+8.5,T],[cx+bw/2+8.5,T],[cx+bw/2-8.5,B],[cx-bw/2-8.5,B]],RED);
+  text(c,t,cx+6,(T+B)/2+3,ts,900,'#fff',880);
+  text(c,$('sub').value,536,1298,+$('ss').value,900,'#d6101c',960);
+  c.restore();
+}
+
+let q=0;const render=()=>q||(q=requestAnimationFrame(()=>{q=0;draw(ctx,1)}));
+
+/* ---------- inputs ---------- */
+['title','sub','ts','ss','brand','brandEn'].forEach(id=>$(id).addEventListener('input',render));
+$('zoom').addEventListener('input',e=>{S.zoom=+e.target.value;render()});
+$('reset').onclick=()=>{S.zoom=1;S.ox=S.oy=0;$('zoom').value=1;render()};
+
+function load(file,cb){
+  if(!file||!file.type.startsWith('image/'))return;
+  const el=new Image(),url=URL.createObjectURL(file);
+  el.onload=()=>{cb({el,w:el.naturalWidth,h:el.naturalHeight});render()};el.src=url}
+const setPhoto=f=>load(f,o=>{S.img=o;S.zoom=1;S.ox=S.oy=0;$('zoom').value=1;$('hint').style.display='none';cv.classList.add('has')});
+$('fileImg').onchange=e=>setPhoto(e.target.files[0]);
+$('fileLogo').onchange=e=>load(e.target.files[0],o=>S.logo=o);
+$('logoOff').onclick=()=>{S.logo=null;render()};
+$('hint').onclick=()=>$('fileImg').click();
+$('hint').onkeydown=e=>{if(e.key==='Enter'||e.key===' ')$('fileImg').click()};
+const fr=document.querySelector('.frame');
+fr.addEventListener('dragover',e=>e.preventDefault());
+fr.addEventListener('drop',e=>{e.preventDefault();setPhoto(e.dataTransfer.files[0])});
+
+/* drag to reposition, wheel to zoom */
+let drag=null;
+cv.addEventListener('pointerdown',e=>{if(!S.img)return;drag={x:e.clientX,y:e.clientY,ox:S.ox,oy:S.oy};cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',e=>{if(!drag)return;const k=W/cv.clientWidth;S.ox=drag.ox+(e.clientX-drag.x)*k;S.oy=drag.oy+(e.clientY-drag.y)*k;render()});
+['pointerup','pointercancel'].forEach(t=>cv.addEventListener(t,()=>drag=null));
+cv.addEventListener('wheel',e=>{if(!S.img)return;e.preventDefault();S.zoom=Math.min(3,Math.max(1,S.zoom*(e.deltaY<0?1.06:.94)));$('zoom').value=S.zoom;render()},{passive:false});
+
+/* ---------- export ---------- */
+async function exportPng(){
+  const k=+$('res').value,o=document.createElement('canvas');o.width=W*k;o.height=H*k;draw(o.getContext('2d'),k);
+  const blob=await new Promise(r=>o.toBlob(r,'image/png')),name=`news-graphic-${W*k}x${H*k}.png`,msg=$('msg');
+  let dl=null;try{dl=window.claude&&await window.claude.use('downloads')}catch(e){}
+  const modal=()=>{$('out').src=URL.createObjectURL(blob);$('modal').classList.add('on')};
+  if(dl){
+    try{await dl.save({filename:name,data:blob});msg.textContent='Saved ✓';return}
+    catch(e){if(e&&e.code==='declined'){msg.textContent='Download cancelled';return}modal();return}
+  }
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();
+  msg.textContent='Exported';modal();
+}
+$('dl').onclick=exportPng;
+$('close').onclick=$('modal').onclick=e=>{if(e.target.id==='modal'||e.target.id==='close')$('modal').classList.remove('on')};
+
+/* ---------- boot: wait for the Arabic font, then draw ---------- */
+render();
+Promise.all([['900 60px Cairo','نونو مينديز'],['800 40px Cairo','الحساني'],['700 12px Cairo','AL HASSANI']].map(([f,t])=>document.fonts.load(f,t))).then(render,render);
+document.fonts.addEventListener&&document.fonts.addEventListener('loadingdone',render);
+</script>
+</body>
+</html>
