@@ -197,37 +197,81 @@ async def click_search_icon_and_type(page, title: str) -> bool:
 
 
 async def fetch_search_results_via_ui(page, title: str) -> list[dict]:
-    captured_results = []
+    captured_results: list[dict] = []
+    seen_ids: set[str] = set()
+
+    def add_item(item: dict):
+        if not isinstance(item, dict):
+            return
+        item_id = str(item.get("id") or "")
+        if item_id and item_id not in seen_ids:
+            seen_ids.add(item_id)
+            captured_results.append(item)
 
     async def on_response(resp):
-        nonlocal captured_results
         try:
-            url = resp.url
-            if "loader=searchPage" not in url and "/search/" not in url:
-                return
             if resp.status != 200:
                 return
             txt = await resp.text()
-            data = json.loads(txt)
-            if isinstance(data, dict) and isinstance(data.get("results"), list) and data["results"]:
-                captured_results = data["results"]
+            txt_s = txt.strip()
+            if txt_s.startswith("{") or txt_s.startswith("["):
+                data = json.loads(txt_s)
+                if isinstance(data, dict) and isinstance(data.get("results"), list):
+                    for it in data["results"]:
+                        add_item(it)
+                elif isinstance(data, list):
+                    for it in data:
+                        add_item(it)
         except Exception:
             pass
 
     page.on("response", on_response)
 
-    await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=45000)
-    await asyncio.sleep(2.5)
+    queries = [title.strip()]
+    short_q = " ".join(title.strip().split()[:3])
+    if short_q and short_q.lower() != title.strip().lower():
+        queries.append(short_q)
 
-    typed = await click_search_icon_and_type(page, title)
-    if not typed:
-        page.remove_listener("response", on_response)
-        return []
+    for q in queries:
+        captured_results.clear()
+        seen_ids.clear()
 
-    for _ in range(16):
+        await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=45000)
+        await asyncio.sleep(2.5)
+
+        typed = await click_search_icon_and_type(page, q)
+        if not typed:
+            continue
+
+        for _ in range(18):
+            if captured_results:
+                break
+            await asyncio.sleep(0.5)
+
+        if not captured_results:
+            links = await page.evaluate(
+                """() => Array.from(document.querySelectorAll("a[href*='/titles/']")).map(a => ({
+                    href: a.getAttribute("href") || "",
+                    text: (a.innerText || "").trim()
+                }))"""
+            )
+            for lk in links:
+                m = re.search(r"/titles/(\d+)(?:/([^/?#]+))?", lk.get("href") or "")
+                if m:
+                    slug = m.group(2) or ""
+                    yr = re.search(r"\b(19\d{2}|20\d{2})\b", f"{lk.get('text','')} {slug}")
+                    is_ser = bool(re.search(r"mslsl|series|مسلسل", f"{lk.get('text','')} {slug}", re.I))
+                    add_item({
+                        "id": m.group(1),
+                        "name": lk.get("text") or slug,
+                        "original_title": lk.get("text") or slug,
+                        "year": int(yr.group(1)) if yr else None,
+                        "is_series": is_ser,
+                        "type": "series" if is_ser else "movie",
+                    })
+
         if captured_results:
             break
-        await asyncio.sleep(0.5)
 
     page.remove_listener("response", on_response)
     return captured_results
