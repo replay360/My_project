@@ -17,9 +17,24 @@ UA = (
 )
 AR_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 NOISE = {
-    "hd", "cam", "webrip", "bluray", "mtrjm", "fylm", "mslsl",
+    "hd", "cam", "webrip", "bluray", "mtrjm", "fylm", "mslsl", "drive",
     "مشاهدة", "فيلم", "مسلسل", "مترجم", "مترجمة", "مدبلج", "اون", "أون", "لاين", "اونلاين",
 }
+BLOCKED_HOSTS_OR_PATHS = (
+    "challenges.cloudflare.com",
+    "/cdn-cgi/",
+    "turnstile",
+    "recaptcha",
+    "google-analytics.com",
+    "googletagmanager.com",
+    "doubleclick.net",
+    "googlesyndication.com",
+    "facebook.com",
+    "twitter.com",
+    "instagram.com",
+    "tiktok.com",
+    "t.me",
+)
 
 
 def norm(s: str) -> str:
@@ -39,6 +54,13 @@ def make_job_key(title: str, year: str, season: int | None, episode: int | None)
     if season is not None or episode is not None:
         return f"{base}|s{season or 1}|e{episode or 1}"
     return f"{base}|movie"
+
+
+def is_blocked_url(url: str) -> bool:
+    u = (url or "").strip().lower()
+    if not u.startswith(("http://", "https://")):
+        return True
+    return any(bad in u for bad in BLOCKED_HOSTS_OR_PATHS)
 
 
 def pick_best_result(results: list[dict], title: str, year: str = "", prefer_series: bool = False) -> dict | None:
@@ -71,7 +93,7 @@ def pick_best_result(results: list[dict], title: str, year: str = "", prefer_ser
         if target_tokens and hits == 0:
             continue
 
-        score = hits * 20
+        score = hits * 25
 
         if target_norm and orig == target_norm:
             score += 60
@@ -87,7 +109,7 @@ def pick_best_result(results: list[dict], title: str, year: str = "", prefer_ser
         if target_year is not None and item_year is not None:
             try:
                 if int(item_year) == target_year:
-                    score += 40
+                    score += 30
                 else:
                     score -= 60
             except ValueError:
@@ -193,6 +215,7 @@ async def click_search_icon_and_type(page, title: str) -> bool:
     await box.click()
     await box.fill("")
     await box.type(title, delay=110)
+    await page.keyboard.press("Enter")
     return True
 
 
@@ -210,7 +233,7 @@ async def fetch_search_results_via_ui(page, title: str) -> list[dict]:
 
     async def on_response(resp):
         try:
-            if resp.status != 200:
+            if resp.status != 200 or is_blocked_url(resp.url):
                 return
             txt = await resp.text()
             txt_s = txt.strip()
@@ -237,7 +260,7 @@ async def fetch_search_results_via_ui(page, title: str) -> list[dict]:
         seen_ids.clear()
 
         await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=45000)
-        await asyncio.sleep(2.5)
+        await asyncio.sleep(3.5)
 
         typed = await click_search_icon_and_type(page, q)
         if not typed:
@@ -256,15 +279,21 @@ async def fetch_search_results_via_ui(page, title: str) -> list[dict]:
                 }))"""
             )
             for lk in links:
-                m = re.search(r"/titles/(\d+)(?:/([^/?#]+))?", lk.get("href") or "")
+                href = lk.get("href") or ""
+                if is_blocked_url(urljoin(BASE_URL, href)):
+                    continue
+                m = re.search(r"/titles/(\d+)(?:/([^/?#]+))?", href)
                 if m:
                     slug = m.group(2) or ""
-                    yr = re.search(r"\b(19\d{2}|20\d{2})\b", f"{lk.get('text','')} {slug}")
-                    is_ser = bool(re.search(r"mslsl|series|مسلسل", f"{lk.get('text','')} {slug}", re.I))
+                    clean_slug_label = re.sub(r"\b(hd|cam|webrip|bluray|mtrjm|fylm|mslsl|drive)\b", " ", slug, flags=re.I)
+                    clean_slug_label = re.sub(r"[-_]+", " ", clean_slug_label).strip()
+                    label = lk.get("text") or clean_slug_label or slug
+                    yr = re.search(r"\b(19\d{2}|20\d{2})\b", f"{label} {slug}")
+                    is_ser = bool(re.search(r"mslsl|series|مسلسل", f"{label} {slug}", re.I))
                     add_item({
                         "id": m.group(1),
-                        "name": lk.get("text") or slug,
-                        "original_title": lk.get("text") or slug,
+                        "name": label,
+                        "original_title": clean_slug_label or label,
                         "year": int(yr.group(1)) if yr else None,
                         "is_series": is_ser,
                         "type": "series" if is_ser else "movie",
@@ -323,14 +352,16 @@ async def go_to_watch_page(page) -> bool:
                     href = await el.get_attribute("href")
                     if href and "/watch/" in href:
                         watch_url = urljoin(page.url, href)
-                        await page.goto(watch_url, wait_until="domcontentloaded", timeout=45000)
-                        await asyncio.sleep(2.5)
-                        return True
+                        if not is_blocked_url(watch_url):
+                            await page.goto(watch_url, wait_until="domcontentloaded", timeout=45000)
+                            await asyncio.sleep(3)
+                            return True
 
                     await el.scroll_into_view_if_needed()
                     await el.click()
                     for _ in range(12):
                         if "/watch/" in page.url:
+                            await asyncio.sleep(2)
                             return True
                         await asyncio.sleep(0.5)
             except Exception:
@@ -346,9 +377,14 @@ async def extract_single_embed(page, wait_time: int = 8) -> str | None:
     def add(u):
         if not u or not u.startswith("http"):
             return
-        if u not in seen:
-            seen.add(u)
-            found.append(u)
+        full_u = u.strip()
+        if is_blocked_url(full_u):
+            return
+        if urlparse(full_u).netloc == site_host and urlparse(full_u).path in ("", "/"):
+            return
+        if full_u not in seen:
+            seen.add(full_u)
+            found.append(full_u)
 
     page.on("framenavigated", lambda fr: add(fr.url) if fr != page.main_frame else None)
     await asyncio.sleep(wait_time)
@@ -414,7 +450,7 @@ async def extract_embed_job(
             title_url = f"{BASE_URL}/titles/{item_id}/{slug}" if slug else f"{BASE_URL}/titles/{item_id}"
 
             await page.goto(title_url, wait_until="domcontentloaded", timeout=45000)
-            await asyncio.sleep(2)
+            await asyncio.sleep(2.5)
 
             body_text = await page.inner_text("body")
             if "404" in body_text or "/titles/" not in page.url:
