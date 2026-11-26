@@ -5,7 +5,7 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote_plus, urljoin, urlparse
 
 from playwright.async_api import async_playwright
 
@@ -219,6 +219,37 @@ async def click_search_icon_and_type(page, title: str) -> bool:
     return True
 
 
+async def collect_title_links_from_dom(page, add_item):
+    links = await page.evaluate(
+        """() => Array.from(document.querySelectorAll("a[href*='/titles/']")).map(a => ({
+            href: a.getAttribute("href") || "",
+            text: (a.innerText || "").trim()
+        }))"""
+    )
+    for lk in links:
+        href = lk.get("href") or ""
+        if is_blocked_url(urljoin(BASE_URL, href)):
+            continue
+        m = re.search(r"/titles/(\d+)(?:/([^/?#]+))?", href)
+        if m:
+            slug = m.group(2) or ""
+            clean_slug_label = re.sub(
+                r"\b(hd|cam|webrip|bluray|mtrjm|fylm|mslsl|drive)\b", " ", slug, flags=re.I
+            )
+            clean_slug_label = re.sub(r"[-_]+", " ", clean_slug_label).strip()
+            label = lk.get("text") or clean_slug_label or slug
+            yr = re.search(r"\b(19\d{2}|20\d{2})\b", f"{label} {slug}")
+            is_ser = bool(re.search(r"mslsl|series|مسلسل", f"{label} {slug}", re.I))
+            add_item({
+                "id": m.group(1),
+                "name": label,
+                "original_title": clean_slug_label or label,
+                "year": int(yr.group(1)) if yr else None,
+                "is_series": is_ser,
+                "type": "series" if is_ser else "movie",
+            })
+
+
 async def fetch_search_results_via_ui(page, title: str) -> list[dict]:
     captured_results: list[dict] = []
     seen_ids: set[str] = set()
@@ -263,41 +294,18 @@ async def fetch_search_results_via_ui(page, title: str) -> list[dict]:
         await asyncio.sleep(3.5)
 
         typed = await click_search_icon_and_type(page, q)
-        if not typed:
-            continue
-
-        for _ in range(18):
-            if captured_results:
-                break
-            await asyncio.sleep(0.5)
+        if typed:
+            for _ in range(18):
+                if captured_results:
+                    break
+                await asyncio.sleep(0.5)
+            await collect_title_links_from_dom(page, add_item)
 
         if not captured_results:
-            links = await page.evaluate(
-                """() => Array.from(document.querySelectorAll("a[href*='/titles/']")).map(a => ({
-                    href: a.getAttribute("href") || "",
-                    text: (a.innerText || "").trim()
-                }))"""
-            )
-            for lk in links:
-                href = lk.get("href") or ""
-                if is_blocked_url(urljoin(BASE_URL, href)):
-                    continue
-                m = re.search(r"/titles/(\d+)(?:/([^/?#]+))?", href)
-                if m:
-                    slug = m.group(2) or ""
-                    clean_slug_label = re.sub(r"\b(hd|cam|webrip|bluray|mtrjm|fylm|mslsl|drive)\b", " ", slug, flags=re.I)
-                    clean_slug_label = re.sub(r"[-_]+", " ", clean_slug_label).strip()
-                    label = lk.get("text") or clean_slug_label or slug
-                    yr = re.search(r"\b(19\d{2}|20\d{2})\b", f"{label} {slug}")
-                    is_ser = bool(re.search(r"mslsl|series|مسلسل", f"{label} {slug}", re.I))
-                    add_item({
-                        "id": m.group(1),
-                        "name": label,
-                        "original_title": clean_slug_label or label,
-                        "year": int(yr.group(1)) if yr else None,
-                        "is_series": is_ser,
-                        "type": "series" if is_ser else "movie",
-                    })
+            search_url = f"{BASE_URL}/?s={quote_plus(q)}"
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
+            await asyncio.sleep(3.5)
+            await collect_title_links_from_dom(page, add_item)
 
         if captured_results:
             break
@@ -434,7 +442,14 @@ async def extract_embed_job(
         try:
             results = await fetch_search_results_via_ui(page, title)
             if not results:
-                return {"ok": False, "error": "no_search_results", "embed_url": None}
+                body_preview = re.sub(r"\s+", " ", await page.inner_text("body"))[:250]
+                return {
+                    "ok": False,
+                    "error": "no_search_results",
+                    "page_url": page.url,
+                    "body_preview": body_preview,
+                    "embed_url": None,
+                }
 
             chosen = pick_best_result(results, title, year, prefer_series=prefer_series)
             if not chosen or not chosen.get("id"):
